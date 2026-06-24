@@ -328,86 +328,90 @@ class ClaudeHookInstaller:
             return False
     
     def uninstall_hooks(self) -> Tuple[bool, str]:
-        """卸载钩子配置"""
+        """从 ~/.claude/settings.json 中卸载钩子配置。"""
         try:
-            if not self.hooks_file.exists():
+            if not self.settings_file.exists():
                 return True, "钩子配置不存在，无需卸载"
-            
-            # 备份现有配置
-            backup_path = self.backup_existing_hooks()
-            
-            # 删除钩子配置
-            self.hooks_file.unlink()
-            
+
+            # 备份
+            backup_path = self.backup_settings()
+
+            settings = self.read_settings()
+            modified = False
+
+            if 'hooks' in settings:
+                del settings['hooks']
+                modified = True
+            if '_metadata' in settings:
+                del settings['_metadata']
+                modified = True
+
+            if modified:
+                self.write_settings(settings)
+
             message = "✅ Claude Code钩子已卸载"
             if backup_path:
                 message += f"，配置已备份到: {backup_path}"
-            
+
             return True, message
-            
+
         except Exception as e:
             return False, f"❌ 卸载失败: {str(e)}"
     
     def get_installation_status(self) -> Dict:
-        """获取安装状态"""
+        """获取基于 ~/.claude/settings.json 的安装状态。"""
         status = {
             'claude_detected': False,
             'claude_location': None,
             'hooks_installed': False,
-            'hooks_file': str(self.hooks_file),
+            'hooks_file': str(self.settings_file),
             'hooks_valid': False,
             'hook_script_exists': self.hook_script_path.exists(),
             'enabled_hooks': []
         }
-        
-        # 检测Claude Code
+
         status['claude_detected'], status['claude_location'] = self.detect_claude_code()
-        
-        # 检查钩子文件
-        if self.hooks_file.exists():
-            status['hooks_installed'] = True
-            
+
+        if self.settings_file.exists():
             try:
-                with open(self.hooks_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                
-                status['hooks_valid'] = True
-                hooks = config.get('hooks', {})
-                
-                # 新版 API 格式：hooks 的值是数组，检查是否有配置
-                for hook_name, hook_list in hooks.items():
-                    if isinstance(hook_list, list) and len(hook_list) > 0:
-                        status['enabled_hooks'].append(hook_name)
-                        
+                settings = self.read_settings()
+                hooks = settings.get('hooks', {})
+
+                if hooks:
+                    status['hooks_installed'] = True
+                    status['hooks_valid'] = True
+                    for hook_name, hook_list in hooks.items():
+                        if isinstance(hook_list, list) and len(hook_list) > 0:
+                            status['enabled_hooks'].append(hook_name)
             except Exception as e:
                 status['hooks_valid'] = False
                 status['error'] = str(e)
-        
+
         return status
-    
+
     def print_status(self):
         """打印安装状态"""
         status = self.get_installation_status()
-        
+
         print("📊 Claude Code钩子状态")
         print("=" * 40)
-        
+
         # Claude Code检测
         if status['claude_detected']:
             print(f"✅ Claude Code: {status['claude_location']}")
         else:
             print("❌ Claude Code: 未检测到")
-        
+
         # 钩子脚本
         if status['hook_script_exists']:
             print(f"✅ 钩子脚本: {self.hook_script_path}")
         else:
             print(f"❌ 钩子脚本: 未找到")
-        
+
         # 钩子配置
         if status['hooks_installed']:
             if status['hooks_valid']:
-                print(f"✅ 钩子配置: {status['hooks_file']}")
+                print(f"✅ 钩子配置: {self.settings_file}")
                 if status['enabled_hooks']:
                     print(f"🔗 已启用钩子: {', '.join(status['enabled_hooks'])}")
                 else:
@@ -416,12 +420,12 @@ class ClaudeHookInstaller:
                 print(f"❌ 钩子配置: 格式错误 - {status.get('error', '未知错误')}")
         else:
             print("❌ 钩子配置: 未安装")
-        
+
         # 总体状态
-        if (status['claude_detected'] and 
-            status['hook_script_exists'] and 
-            status['hooks_installed'] and 
-            status['hooks_valid'] and 
+        if (status['claude_detected'] and
+            status['hook_script_exists'] and
+            status['hooks_installed'] and
+            status['hooks_valid'] and
             status['enabled_hooks']):
             print("\n🎉 钩子系统完全就绪！")
         else:

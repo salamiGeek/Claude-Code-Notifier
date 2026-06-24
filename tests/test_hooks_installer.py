@@ -278,3 +278,91 @@ class TestMigrateLegacyHooksFile:
 
         result = installer.migrate_legacy_hooks_file()
         assert result is None
+
+
+class TestUninstallHooks:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_uninstall_removes_hooks_and_metadata(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        installer.write_settings({
+            "model": "opus[1m]",
+            "hooks": {"PreToolUse": []},
+            "_metadata": {"installer": "claude-notifier-pypi"}
+        })
+
+        success, _ = installer.uninstall_hooks()
+        assert success is True
+        settings = installer.read_settings()
+        assert 'hooks' not in settings
+        assert '_metadata' not in settings
+        assert settings['model'] == 'opus[1m]'
+
+    def test_uninstall_when_settings_missing(self, tmp_path):
+        installer = self._installer(tmp_path)
+        success, message = installer.uninstall_hooks()
+        assert success is True
+        assert '无需卸载' in message or '不存在' in message
+
+
+class TestVerifyInstallation:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_verify_passes_with_valid_hooks(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        hooks = installer.create_hooks_config()
+        installer.write_settings({"hooks": hooks})
+        assert installer.verify_installation() is True
+
+    def test_verify_fails_when_hooks_missing(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        installer.write_settings({"model": "opus[1m]"})
+        assert installer.verify_installation() is False
+
+
+class TestGetInstallationStatus:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_status_reports_installed_hooks(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        hooks = installer.create_hooks_config()
+        installer.write_settings({"hooks": hooks})
+
+        status = installer.get_installation_status()
+        assert status['hooks_installed'] is True
+        assert status['hooks_file'] == str(installer.settings_file)
+        assert 'PreToolUse' in status['enabled_hooks']
+
+    def test_status_reports_not_installed(self, tmp_path):
+        installer = self._installer(tmp_path)
+        status = installer.get_installation_status()
+        assert status['hooks_installed'] is False
+
+
+class TestPrintStatus:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_print_status_shows_settings_json_path(self, tmp_path, capsys):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        hooks = installer.create_hooks_config()
+        installer.write_settings({"hooks": hooks})
+
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            installer.print_status()
+
+        captured = capsys.readouterr()
+        assert str(installer.settings_file) in captured.out
+        assert 'settings.json' in captured.out
