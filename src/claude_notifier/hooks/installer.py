@@ -12,7 +12,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import logging
 
 class ClaudeHookInstaller:
@@ -70,16 +70,16 @@ class ClaudeHookInstaller:
             self.logger.error(f"备份钩子配置失败: {e}")
             return None
     
-    def create_hooks_config(self) -> Dict:
+    def create_hooks_config(self) -> Dict[str, Any]:
         """
-        创建钩子配置
-        
+        创建钩子配置（仅 hooks 字段的值）
+
         使用 Claude Code CLI 最新版本的 hooks API 格式：
         - PreToolUse: 工具使用前触发（用于敏感操作检测）
         - PostToolUse: 工具使用后触发
         - Stop: Claude 停止工作时触发（任务完成通知）
         - Notification: 通知事件（权限请求、空闲提示）
-        
+
         数据通过 stdin 以 JSON 格式传递，响应通过 stdout 返回 JSON
         """
         # 统一使用当前 Python 解释器
@@ -87,73 +87,96 @@ class ClaudeHookInstaller:
         py_quoted = f'"{py}"' if (os.name == 'nt' or ' ' in py) else py
         hook_path = str(self.hook_script_path)
         hook_quoted = f'"{hook_path}"' if (os.name == 'nt' or ' ' in hook_path) else hook_path
-        
+
         # 基础命令（新版 API 通过 stdin 传递数据，无需命令行参数）
         base_command = f"{py_quoted} {hook_quoted}"
 
         return {
-            "hooks": {
-                # PreToolUse: 工具使用前触发，用于敏感操作检测
-                "PreToolUse": [
-                    {
-                        # 匹配敏感工具：Bash命令、文件编辑、文件写入、文件删除等
-                        "matcher": "Bash|Edit|Write|MultiEdit|DeleteFile|NotebookEdit",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": base_command
-                            }
-                        ]
-                    }
-                ],
-                # PostToolUse: 工具使用后触发（可用于错误检测）
-                "PostToolUse": [
-                    {
-                        # 匹配可能产生错误的工具
-                        "matcher": "Bash|Task",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": base_command
-                            }
-                        ]
-                    }
-                ],
-                # Stop: Claude 停止工作时触发（任务完成通知）
-                "Stop": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": base_command
-                            }
-                        ]
-                    }
-                ],
-                # Notification: 权限请求和空闲提示
-                "Notification": [
-                    {
-                        # 匹配权限请求和空闲提示
-                        "matcher": "permission_prompt|idle_prompt",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": base_command
-                            }
-                        ]
-                    }
-                ]
-            },
-            "_metadata": {
-                "installer": "claude-notifier-pypi",
-                "api_version": "2.0",
-                "installed_at": str(os.times()),
-                "hook_script": str(self.hook_script_path),
-                "config_dir": str(self.notifier_config_dir)
-            }
+            # PreToolUse: 工具使用前触发，用于敏感操作检测
+            "PreToolUse": [
+                {
+                    # 匹配敏感工具：Bash命令、文件编辑、文件写入、文件删除等
+                    "matcher": "Bash|Edit|Write|MultiEdit|DeleteFile|NotebookEdit",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": base_command
+                        }
+                    ]
+                }
+            ],
+            # PostToolUse: 工具使用后触发（可用于错误检测）
+            "PostToolUse": [
+                {
+                    # 匹配可能产生错误的工具
+                    "matcher": "Bash|Task",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": base_command
+                        }
+                    ]
+                }
+            ],
+            # Stop: Claude 停止工作时触发（任务完成通知）
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": base_command
+                        }
+                    ]
+                }
+            ],
+            # Notification: 权限请求和空闲提示
+            "Notification": [
+                {
+                    # 匹配权限请求和空闲提示
+                    "matcher": "permission_prompt|idle_prompt",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": base_command
+                        }
+                    ]
+                }
+            ]
         }
+
+    def create_metadata(self) -> Dict[str, Any]:
+        """创建用于识别安装来源的 _metadata。"""
+        return {
+            "installer": "claude-notifier-pypi",
+            "api_version": "2.0",
+            "installed_at": str(os.times()),
+            "hook_script": str(self.hook_script_path),
+            "config_dir": str(self.notifier_config_dir)
+        }
+
+    def is_notifier_managed(self, settings: Dict[str, Any]) -> bool:
+        """判断 settings 中的 hooks 是否由本工具管理。"""
+        metadata = settings.get('_metadata', {})
+        if metadata.get('installer') == 'claude-notifier-pypi':
+            return True
+
+        hooks = settings.get('hooks', {})
+        marker = 'claude_hook.py'
+        for hook_list in hooks.values():
+            if not isinstance(hook_list, list):
+                continue
+            for item in hook_list:
+                if not isinstance(item, dict):
+                    continue
+                for hook in item.get('hooks', []):
+                    if not isinstance(hook, dict):
+                        continue
+                    command = hook.get('command', '')
+                    if marker in command:
+                        return True
+        return False
     
-    def read_settings(self) -> Dict[str, any]:
+    def read_settings(self) -> Dict[str, Any]:
         """读取 Claude Code settings.json，不存在或为空返回空字典。"""
         if not self.settings_file.exists():
             return {}
@@ -167,7 +190,7 @@ class ClaudeHookInstaller:
             self.logger.warning(f"读取 settings.json 失败: {e}，将使用空配置")
             return {}
 
-    def write_settings(self, settings: Dict[str, any]) -> None:
+    def write_settings(self, settings: Dict[str, Any]) -> None:
         """写入 Claude Code settings.json。"""
         self.claude_config_dir.mkdir(parents=True, exist_ok=True)
         with open(self.settings_file, 'w', encoding='utf-8') as f:
