@@ -272,7 +272,7 @@ claude-notifier hooks status
 claude-notifier hooks verify
 
 # 3. 查看 Claude Code 配置文件
-cat ~/.config/claude/hooks.json
+cat ~/.claude/settings.json | jq '.hooks'
 
 # 4. 重新安装钩子
 claude-notifier hooks install --force
