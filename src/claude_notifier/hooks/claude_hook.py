@@ -137,9 +137,7 @@ class ClaudeHook:
         
         if self.mode == 'pypi_full':
             try:
-                # PyPI完整模式：发送完成通知
-                duration = int(time.time() - self.state.get('session_start', time.time()))
-                message = f"✅ 任务已完成 ({self.state.get('command_count', 0)} 个命令, {duration//60}分钟)"
+                message = f"✅ 任务已完成 ({self.state.get('command_count', 0)} 个命令)"
                 self.notifier.send(message, event_type='task_completion')
             except Exception as e:
                 self.logger.warning(f"通知发送失败: {e}")
@@ -224,35 +222,36 @@ class ClaudeHook:
         self.state['last_activity'] = current_time
         self.state['command_count'] = self.state.get('command_count', 0) + 1
         self.save_state()
-        
-        # 敏感操作检测
-        sensitive_tools = ['Bash', 'Edit', 'Write', 'MultiEdit', 'DeleteFile']
-        if tool_name in sensitive_tools:
-            self.logger.info(f"检测到敏感操作: {tool_name}")
-            
-            if self.mode == 'pypi_full':
-                try:
-                    # 确保 tool_input 是字典类型
-                    if not isinstance(tool_input, dict):
-                        tool_input = {}
-                    
-                    # 提取操作详情
-                    if tool_name == 'Bash':
-                        command = str(tool_input.get('command', ''))[:100]
-                        message = f"⚠️ 即将执行命令: {command}"
-                    elif tool_name in ['Edit', 'Write', 'MultiEdit']:
-                        file_path = tool_input.get('file_path', tool_input.get('path', ''))
-                        message = f"⚠️ 即将修改文件: {file_path}"
-                    elif tool_name == 'DeleteFile':
-                        file_path = tool_input.get('file_path', '')
-                        message = f"⚠️ 即将删除文件: {file_path}"
-                    else:
-                        message = f"⚠️ 敏感操作: {tool_name}"
-                    
-                    self.notifier.send(message, event_type='sensitive_operation', priority='high')
-                except Exception as e:
-                    self.logger.warning(f"敏感操作通知发送失败: {e}")
-        
+
+        # 敏感操作检测（受 config.yaml 中 events.sensitive_operation.enabled 控制）
+        sensitive_config = self.config.get('events', {}).get('sensitive_operation', {})
+        if sensitive_config.get('enabled', True):
+            sensitive_tools = ['Bash', 'Edit', 'Write', 'MultiEdit', 'DeleteFile']
+            if tool_name in sensitive_tools:
+                self.logger.info(f"检测到敏感操作: {tool_name}")
+
+                if self.mode == 'pypi_full':
+                    try:
+                        if not isinstance(tool_input, dict):
+                            tool_input = {}
+
+                        if tool_name == 'Bash':
+                            command = str(tool_input.get('command', ''))[:100]
+                            message = f"⚠️ 即将执行命令: {command}"
+                        elif tool_name in ['Edit', 'Write', 'MultiEdit']:
+                            file_path = tool_input.get('file_path', tool_input.get('path', ''))
+                            message = f"⚠️ 即将修改文件: {file_path}"
+                        elif tool_name == 'DeleteFile':
+                            file_path = tool_input.get('file_path', '')
+                            message = f"⚠️ 即将删除文件: {file_path}"
+                        else:
+                            message = f"⚠️ 敏感操作: {tool_name}"
+
+                        priority = sensitive_config.get('priority', 'high')
+                        self.notifier.send(message, event_type='sensitive_operation', priority=priority)
+                    except Exception as e:
+                        self.logger.warning(f"敏感操作通知发送失败: {e}")
+
         # 返回继续执行
         return {"continue": True}
     
@@ -299,9 +298,8 @@ class ClaudeHook:
         
         if self.mode == 'pypi_full':
             try:
-                duration = int(time.time() - self.state.get('session_start', time.time()))
                 cmd_count = self.state.get('command_count', 0)
-                message = f"✅ 任务已完成 ({cmd_count} 个操作, {duration//60}分钟)"
+                message = f"✅ 任务已完成 ({cmd_count} 个操作)"
                 self.notifier.send(message, event_type='task_completion')
             except Exception as e:
                 self.logger.warning(f"完成通知发送失败: {e}")
