@@ -127,6 +127,12 @@ class TestIsNotifierManaged:
         }
         assert installer.is_notifier_managed(settings) is False
 
+    def test_non_dict_hooks_not_managed(self, tmp_path):
+        installer = self._installer(tmp_path)
+        assert installer.is_notifier_managed({"hooks": []}) is False
+        assert installer.is_notifier_managed({"hooks": "invalid"}) is False
+        assert installer.is_notifier_managed({"hooks": 42}) is False
+
     def test_empty_settings_not_managed(self, tmp_path):
         installer = self._installer(tmp_path)
         assert installer.is_notifier_managed({}) is False

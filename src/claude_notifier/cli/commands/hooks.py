@@ -94,7 +94,7 @@ def install(force, detect_only):
         else:
             click.echo("\n💡 安装故障排除:")
             click.echo("  1. 确保Claude Code已正确安装")
-            click.echo("  2. 检查~/.config/claude目录权限")
+            click.echo("  2. 检查~/.claude目录权限")
             click.echo("  3. 使用 --force 强制覆盖现有配置")
             sys.exit(1)
             

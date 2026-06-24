@@ -11,6 +11,7 @@ import sys
 import json
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 import logging
@@ -52,23 +53,6 @@ class ClaudeHookInstaller:
             return True, str(self.claude_config_dir)
         
         return False, None
-    
-    def backup_existing_hooks(self) -> Optional[str]:
-        """备份现有钩子配置"""
-        if not self.hooks_file.exists():
-            return None
-        
-        from datetime import datetime
-        backup_name = f"hooks.json.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        backup_path = self.hooks_file.parent / backup_name
-        
-        try:
-            shutil.copy2(self.hooks_file, backup_path)
-            self.logger.info(f"已备份现有钩子配置到: {backup_path}")
-            return str(backup_path)
-        except Exception as e:
-            self.logger.error(f"备份钩子配置失败: {e}")
-            return None
     
     def create_hooks_config(self) -> Dict[str, Any]:
         """
@@ -149,7 +133,7 @@ class ClaudeHookInstaller:
         return {
             "installer": "claude-notifier-pypi",
             "api_version": "2.0",
-            "installed_at": str(os.times()),
+            "installed_at": datetime.now(timezone.utc).isoformat(),
             "hook_script": str(self.hook_script_path),
             "config_dir": str(self.notifier_config_dir)
         }
@@ -161,6 +145,8 @@ class ClaudeHookInstaller:
             return True
 
         hooks = settings.get('hooks', {})
+        if not isinstance(hooks, dict):
+            return False
         marker = 'claude_hook.py'
         for hook_list in hooks.values():
             if not isinstance(hook_list, list):
@@ -200,8 +186,8 @@ class ClaudeHookInstaller:
         """备份当前 settings.json，返回备份路径。"""
         if not self.settings_file.exists():
             return None
-        from datetime import datetime
-        backup_name = f"settings.json.{datetime.now().strftime('%Y%m%d_%H%M%S')}.backup"
+        from datetime import datetime, timezone
+        backup_name = f"settings.json.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.backup"
         backup_path = self.claude_config_dir / backup_name
         try:
             import shutil
@@ -229,8 +215,8 @@ class ClaudeHookInstaller:
             return None
 
         # 备份旧文件
-        from datetime import datetime
-        backup_name = f"hooks.json.{datetime.now().strftime('%Y%m%d_%H%M%S')}.backup"
+        from datetime import datetime, timezone
+        backup_name = f"hooks.json.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.backup"
         backup_path = self.legacy_hooks_file.parent / backup_name
         try:
             shutil.copy2(self.legacy_hooks_file, backup_path)
