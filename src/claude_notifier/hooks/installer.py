@@ -20,11 +20,15 @@ class ClaudeHookInstaller:
     
     def __init__(self):
         self.home_dir = Path.home()
-        self.claude_config_dir = self.home_dir / '.config' / 'claude'
-        self.hooks_file = self.claude_config_dir / 'hooks.json'
+        self.claude_config_dir = self.home_dir / '.claude'
+        self.settings_file = self.claude_config_dir / 'settings.json'
+        self.legacy_hooks_file = self.home_dir / '.config' / 'claude' / 'hooks.json'
         self.notifier_config_dir = self.home_dir / '.claude-notifier'
         self.logger = logging.getLogger(__name__)
-        
+
+        # 保留旧路径兼容（只读）
+        self.hooks_file = self.legacy_hooks_file
+
         # 获取钩子脚本路径
         self.hook_script_path = Path(__file__).parent / 'claude_hook.py'
         
@@ -149,6 +153,42 @@ class ClaudeHookInstaller:
             }
         }
     
+    def read_settings(self) -> Dict[str, any]:
+        """读取 Claude Code settings.json，不存在或为空返回空字典。"""
+        if not self.settings_file.exists():
+            return {}
+        try:
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if not content:
+                    return {}
+                return json.loads(content)
+        except Exception as e:
+            self.logger.warning(f"读取 settings.json 失败: {e}，将使用空配置")
+            return {}
+
+    def write_settings(self, settings: Dict[str, any]) -> None:
+        """写入 Claude Code settings.json。"""
+        self.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.settings_file, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+
+    def backup_settings(self) -> Optional[str]:
+        """备份当前 settings.json，返回备份路径。"""
+        if not self.settings_file.exists():
+            return None
+        from datetime import datetime
+        backup_name = f"settings.json.{datetime.now().strftime('%Y%m%d_%H%M%S')}.backup"
+        backup_path = self.claude_config_dir / backup_name
+        try:
+            import shutil
+            shutil.copy2(self.settings_file, backup_path)
+            self.logger.info(f"已备份 settings.json 到: {backup_path}")
+            return str(backup_path)
+        except Exception as e:
+            self.logger.error(f"备份 settings.json 失败: {e}")
+            return None
+
     def install_hooks(self, force: bool = False) -> Tuple[bool, str]:
         """安装钩子配置"""
         try:
