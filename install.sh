@@ -12,6 +12,11 @@ CONFIG_DIR="$HOME/.claude-notifier"
 INSTALL_LOG="$CONFIG_DIR/install.log"
 VERSION_FILE="$CONFIG_DIR/version.json"
 
+# Git 安装目录与分支（可通过环境变量覆盖）
+# 例: CLAUDE_NOTIFIER_INSTALL_DIR=$(pwd) CLAUDE_NOTIFIER_BRANCH=main bash install.sh
+INSTALL_DIR="${CLAUDE_NOTIFIER_INSTALL_DIR:-$HOME/Claude-Code-Notifier}"
+GIT_BRANCH="${CLAUDE_NOTIFIER_BRANCH:-main}"
+
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -104,16 +109,16 @@ install_git_mode() {
     echo -e "${BLUE}🔧 执行 Git 开发版安装...${NC}"
     
     # 克隆或更新仓库
-    if [ -d "$HOME/Claude-Code-Notifier" ]; then
-        cd "$HOME/Claude-Code-Notifier"
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        cd "$INSTALL_DIR"
         echo -e "${YELLOW}🔄 更新现有仓库...${NC}"
         git fetch --all
-        git checkout dev
-        git pull origin dev
+        git checkout "$GIT_BRANCH"
+        git pull origin "$GIT_BRANCH"
     else
         echo -e "${YELLOW}📥 克隆开发仓库...${NC}"
-        git clone -b dev $REPO_URL "$HOME/Claude-Code-Notifier"
-        cd "$HOME/Claude-Code-Notifier"
+        git clone -b "$GIT_BRANCH" $REPO_URL "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
     fi
     
     # 验证项目文件存在
@@ -128,9 +133,18 @@ install_git_mode() {
     version=$(git describe --tags --always)
     echo -e "${GREEN}📦 项目版本: $version${NC}"
     
-    # 安装依赖
-    echo -e "${YELLOW}📦 安装Python依赖...${NC}"
-    pip3 install -e .
+    # 安装依赖（使用 pipx 隔离环境，避免污染系统 Python）
+    echo -e "${YELLOW}📦 使用 pipx 安装（隔离环境）...${NC}"
+    if ! command -v pipx &> /dev/null; then
+        echo -e "${YELLOW}⚠️ pipx 未安装，正在安装 pipx...${NC}"
+        if command -v apt &> /dev/null; then
+            sudo apt update && sudo apt install -y pipx
+        else
+            python3 -m pip install --user pipx
+        fi
+        pipx ensurepath 2>/dev/null || true
+    fi
+    pipx install --editable . --force
     
     # 保存版本信息
     cat > "$VERSION_FILE" <<EOF
@@ -139,7 +153,7 @@ install_git_mode() {
     "version": "$version",
     "installed_at": "$(date -Iseconds)",
     "auto_update": false,
-    "repo_path": "$HOME/Claude-Code-Notifier",
+    "repo_path": "$INSTALL_DIR",
     "branch": "$(git branch --show-current)"
 }
 EOF
@@ -259,27 +273,27 @@ SCRIPT
 setup_update_reminder_git() {
     echo -e "${BLUE}📢 设置更新提醒...${NC}"
     
-    cat > "$CONFIG_DIR/git_update_check.sh" <<'SCRIPT'
+    cat > "$CONFIG_DIR/git_update_check.sh" <<SCRIPT
 #!/bin/bash
 # Git版本更新提醒
 
-REPO_PATH="$HOME/Claude-Code-Notifier"
-CONFIG_DIR="$HOME/.claude-notifier"
+REPO_PATH="$INSTALL_DIR"
+CONFIG_DIR="\$HOME/.claude-notifier"
 
-if [ -d "$REPO_PATH" ]; then
-    cd "$REPO_PATH"
-    
+if [ -d "\$REPO_PATH" ]; then
+    cd "\$REPO_PATH"
+
     # 获取远程更新
     git fetch --quiet
-    
+
     # 检查是否有更新
-    LOCAL=$(git rev-parse HEAD)
-    REMOTE=$(git rev-parse @{u})
-    
-    if [ "$LOCAL" != "$REMOTE" ]; then
+    LOCAL=\$(git rev-parse HEAD)
+    REMOTE=\$(git rev-parse @{u})
+
+    if [ "\$LOCAL" != "\$REMOTE" ]; then
         echo "🔔 Claude Notifier Git版本有更新可用"
         echo "   运行以下命令更新:"
-        echo "   cd $REPO_PATH && git pull && pip3 install -e ."
+        echo "   cd \$REPO_PATH && git pull && pipx install --editable . --force"
     fi
 fi
 SCRIPT
