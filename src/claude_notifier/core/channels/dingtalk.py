@@ -162,6 +162,7 @@ class DingtalkChannel(BaseChannel):
         icons = {
             'permission': '🔐',
             'completion': '✅',
+            'task_completion': '✅',
             'test': '🧪',
             'custom_event': '🔔',
             'rate_limit': '⚠️',

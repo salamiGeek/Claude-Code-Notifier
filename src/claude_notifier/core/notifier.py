@@ -123,8 +123,18 @@ class Notifier:
         """
         # 标准化消息格式
         if isinstance(message, str):
+            event_titles = {
+                'task_completion': '任务完成',
+                'permission': '需要权限确认',
+                'confirmation_required': '需要权限确认',
+                'rate_limit': '额度限流',
+                'error': '执行出错',
+                'session_start': '会话启动',
+                'idle_prompt': '等待输入',
+            }
+            title = event_titles.get(event_type, '通知')
             template_data = {
-                'title': '通知',
+                'title': title,
                 'content': message,
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
                 **kwargs
