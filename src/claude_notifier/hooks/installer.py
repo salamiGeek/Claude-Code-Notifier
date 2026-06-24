@@ -212,45 +212,79 @@ class ClaudeHookInstaller:
             self.logger.error(f"备份 settings.json 失败: {e}")
             return None
 
-    def install_hooks(self, force: bool = False) -> Tuple[bool, str]:
-        """安装钩子配置"""
+    def migrate_legacy_hooks_file(self) -> Optional[str]:
+        """迁移旧路径 hooks.json：若由本工具创建则备份并删除，否则返回 None。"""
+        if not self.legacy_hooks_file.exists():
+            return None
+
         try:
-            # 1. 检测Claude Code
+            with open(self.legacy_hooks_file, 'r', encoding='utf-8') as f:
+                legacy_config = json.load(f)
+        except Exception as e:
+            self.logger.warning(f"读取旧 hooks.json 失败: {e}，跳过迁移")
+            return None
+
+        if not self.is_notifier_managed(legacy_config):
+            self.logger.info("旧 hooks.json 不是由本工具创建，保留不删除")
+            return None
+
+        # 备份旧文件
+        from datetime import datetime
+        backup_name = f"hooks.json.{datetime.now().strftime('%Y%m%d_%H%M%S')}.backup"
+        backup_path = self.legacy_hooks_file.parent / backup_name
+        try:
+            shutil.copy2(self.legacy_hooks_file, backup_path)
+            self.legacy_hooks_file.unlink()
+            self.logger.info(f"已迁移旧 hooks.json，备份: {backup_path}")
+            return str(backup_path)
+        except Exception as e:
+            self.logger.error(f"迁移旧 hooks.json 失败: {e}")
+            return None
+
+    def install_hooks(self, force: bool = False) -> Tuple[bool, str]:
+        """安装钩子配置到 ~/.claude/settings.json。"""
+        try:
+            # 1. 检测 Claude Code
             claude_detected, claude_location = self.detect_claude_code()
             if not claude_detected:
                 return False, "❌ 未检测到Claude Code安装，请先安装Claude Code"
-            
+
             print(f"✅ 检测到Claude Code: {claude_location}")
-            
+
             # 2. 创建配置目录
             self.claude_config_dir.mkdir(parents=True, exist_ok=True)
             print(f"📁 配置目录: {self.claude_config_dir}")
-            
-            # 3. 备份现有配置
-            if self.hooks_file.exists() and not force:
-                response = input("发现现有钩子配置，是否备份并继续? [Y/n]: ")
-                if response.lower() == 'n':
-                    return False, "❌ 用户取消安装"
-            
-            backup_path = self.backup_existing_hooks()
+
+            # 3. 读取当前 settings.json 并备份
+            settings = self.read_settings()
+            backup_path = self.backup_settings()
             if backup_path:
                 print(f"📄 已备份现有配置: {backup_path}")
-            
-            # 4. 创建钩子配置
-            hooks_config = self.create_hooks_config()
-            
-            # 5. 写入配置文件
-            with open(self.hooks_file, 'w', encoding='utf-8') as f:
-                json.dump(hooks_config, f, indent=2, ensure_ascii=False)
-            
-            print(f"✅ 钩子配置已安装: {self.hooks_file}")
-            
-            # 6. 验证配置
+
+            # 4. 判断是否已有 hooks 以及是否由本工具管理
+            existing_hooks = settings.get('hooks')
+            if existing_hooks:
+                if not self.is_notifier_managed(settings) and not force:
+                    return False, "❌ 检测到非本工具安装的 hooks，请使用 --force 强制替换，或先手动备份"
+
+            # 5. 写入 hooks 与 metadata
+            settings['hooks'] = self.create_hooks_config()
+            settings['_metadata'] = self.create_metadata()
+
+            self.write_settings(settings)
+            print(f"✅ 钩子配置已安装: {self.settings_file}")
+
+            # 6. 迁移旧 hooks.json
+            migrated = self.migrate_legacy_hooks_file()
+            if migrated:
+                print(f"🗑️  已迁移旧 hooks.json: {migrated}")
+
+            # 7. 验证
             if self.verify_installation():
                 return True, "🎉 Claude Code钩子安装成功！"
             else:
                 return False, "⚠️ 钩子配置可能存在问题"
-                
+
         except Exception as e:
             self.logger.error(f"安装钩子失败: {e}")
             return False, f"❌ 安装失败: {str(e)}"
@@ -259,36 +293,36 @@ class ClaudeHookInstaller:
         """验证钩子安装"""
         try:
             # 检查配置文件
-            if not self.hooks_file.exists():
+            if not self.settings_file.exists():
                 return False
-            
+
             # 检查配置格式
-            with open(self.hooks_file, 'r', encoding='utf-8') as f:
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            
+
             # 检查必要的钩子（新版 API 格式）
             required_hooks = ['PreToolUse', 'Stop']
             hooks = config.get('hooks', {})
-            
+
             for hook_name in required_hooks:
                 if hook_name not in hooks:
                     self.logger.error(f"缺少必要钩子: {hook_name}")
                     return False
-                
+
                 # 新版 API 格式：hooks 的值是数组
                 hook_list = hooks[hook_name]
                 if not isinstance(hook_list, list) or len(hook_list) == 0:
                     self.logger.warning(f"钩子配置无效: {hook_name}")
                     return False
-            
+
             # 检查钩子脚本
             if not self.hook_script_path.exists():
                 self.logger.error(f"钩子脚本不存在: {self.hook_script_path}")
                 return False
-            
+
             print("✅ 钩子配置验证通过")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"验证钩子安装失败: {e}")
             return False

@@ -163,3 +163,118 @@ class TestCreateHooksConfig:
             pre_tool = config["PreToolUse"][0]
             command = pre_tool["hooks"][0]["command"]
             assert "claude_hook.py" in command
+
+
+class TestInstallHooks:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_install_creates_settings_when_missing(self, tmp_path):
+        installer = self._installer(tmp_path)
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            success, message = installer.install_hooks()
+        assert success is True
+        assert installer.settings_file.exists()
+        settings = installer.read_settings()
+        assert 'hooks' in settings
+        assert '_metadata' in settings
+        assert settings['_metadata']['installer'] == 'claude-notifier-pypi'
+
+    def test_install_preserves_other_settings(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        original = {"model": "opus[1m]", "language": "中文", "env": {"FOO": "bar"}}
+        installer.write_settings(original)
+
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            success, _ = installer.install_hooks()
+
+        assert success is True
+        settings = installer.read_settings()
+        assert settings['model'] == 'opus[1m]'
+        assert settings['language'] == '中文'
+        assert settings['env']['FOO'] == 'bar'
+        assert 'hooks' in settings
+
+    def test_install_replaces_notifier_hooks(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        old_hooks = {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "old_python claude_hook.py"}]}]}
+        installer.write_settings({"hooks": old_hooks, "_metadata": {"installer": "claude-notifier-pypi"}})
+
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            success, _ = installer.install_hooks()
+
+        assert success is True
+        settings = installer.read_settings()
+        assert settings['hooks']['PreToolUse'][0]['matcher'] == "Bash|Edit|Write|MultiEdit|DeleteFile|NotebookEdit"
+
+    def test_install_refuses_foreign_hooks_without_force(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        foreign = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "/other/hook"}]}]}}
+        installer.write_settings(foreign)
+
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            success, message = installer.install_hooks(force=False)
+
+        assert success is False
+        assert 'force' in message.lower() or 'force' in message
+
+    def test_install_replaces_foreign_hooks_with_force(self, tmp_path):
+        installer = self._installer(tmp_path)
+        installer.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        foreign = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "/other/hook"}]}]}, "model": "kimi"}
+        installer.write_settings(foreign)
+
+        with patch.object(installer, 'detect_claude_code', return_value=(True, '/usr/bin/claude')):
+            success, _ = installer.install_hooks(force=True)
+
+        assert success is True
+        settings = installer.read_settings()
+        assert 'hooks' in settings
+        assert settings['model'] == 'kimi'
+
+
+class TestMigrateLegacyHooksFile:
+    def _installer(self, tmp_home: Path):
+        with patch.object(Path, 'home', return_value=tmp_home):
+            return ClaudeHookInstaller()
+
+    def test_no_legacy_file_returns_none(self, tmp_path):
+        installer = self._installer(tmp_path)
+        assert installer.migrate_legacy_hooks_file() is None
+
+    def test_migrates_notifier_managed_legacy_file(self, tmp_path):
+        installer = self._installer(tmp_path)
+        legacy_dir = tmp_path / '.config' / 'claude'
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_file = legacy_dir / 'hooks.json'
+        legacy_file.write_text(json.dumps({"_metadata": {"installer": "claude-notifier-pypi"}}))
+
+        result = installer.migrate_legacy_hooks_file()
+        assert result is not None
+        assert result.endswith('.backup')
+        assert not legacy_file.exists()
+
+    def test_skips_foreign_legacy_file(self, tmp_path):
+        installer = self._installer(tmp_path)
+        legacy_dir = tmp_path / '.config' / 'claude'
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_file = legacy_dir / 'hooks.json'
+        legacy_file.write_text(json.dumps({"hooks": {"PreToolUse": []}}))
+
+        result = installer.migrate_legacy_hooks_file()
+        assert result is None
+        assert legacy_file.exists()
+
+    def test_skips_unreadable_legacy_file(self, tmp_path):
+        installer = self._installer(tmp_path)
+        legacy_dir = tmp_path / '.config' / 'claude'
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_file = legacy_dir / 'hooks.json'
+        legacy_file.write_text('not json')
+
+        result = installer.migrate_legacy_hooks_file()
+        assert result is None
