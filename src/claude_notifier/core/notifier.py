@@ -7,6 +7,7 @@
 """
 
 import os
+import sys
 import time
 import logging
 from typing import Dict, Any, List, Optional, Union
@@ -35,8 +36,8 @@ class Notifier:
         logger = logging.getLogger('claude_notifier')
         
         if not logger.handlers:
-            # 控制台处理器 - 检查是否在CLI模式下运行
-            console_handler = logging.StreamHandler()
+            # 控制台处理器 - 输出到 stderr，避免污染 stdout（尤其是 Claude Code hook）
+            console_handler = logging.StreamHandler(sys.stderr)
             # 如果父级logger已设置为ERROR级别，说明在CLI模式下，使用ERROR级别
             parent_logger = logging.getLogger()
             if parent_logger.level >= logging.ERROR:
@@ -66,6 +67,9 @@ class Notifier:
             # 设置日志级别
             log_level = self.config.get('advanced', {}).get('logging', {}).get('level', 'info')
             logger.setLevel(getattr(logging, log_level.upper()))
+
+            # 避免日志通过父 logger 重复输出（例如 hook 中 root 已配置 handler）
+            logger.propagate = False
             
         return logger
         

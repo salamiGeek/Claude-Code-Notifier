@@ -14,6 +14,13 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+# 钩子脚本必须保证 stdout 只输出 JSON 响应，因此把所有日志定向到 stderr
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stderr
+)
+
 # 导入 Notifier（优先绝对导入，失败则尝试相对导入；不再回退到 src.*）
 try:
     from claude_notifier.core.notifier import Notifier
@@ -305,10 +312,11 @@ class ClaudeHook:
     def on_notification(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Notification 钩子 - 通知事件
-        
+
         处理 permission_prompt（权限请求）和 idle_prompt（空闲提示）
+        Claude Code 通过 notification_type 字段区分具体类型
         """
-        notification_type = context.get('type', '')
+        notification_type = context.get('notification_type', '')
         message = str(context.get('message', '') or '')
         
         self.logger.info(f"Notification: {notification_type} - {message[:50]}")
@@ -337,26 +345,36 @@ class ClaudeHook:
 def main():
     """
     主函数 - 处理钩子调用
-    
-    支持两种调用方式：
-    1. 新版 API：通过环境变量 CLAUDE_HOOK_EVENT 获取事件类型，stdin 读取 JSON 数据
-    2. 旧版 API：通过命令行参数传递事件类型和数据（向后兼容）
+
+    支持三种调用方式：
+    1. 新版 API（默认）：通过 stdin 读取 JSON 数据，hook_event_name 字段标识事件
+    2. 环境变量兼容：设置 CLAUDE_HOOK_EVENT 指定事件类型（手动测试用）
+    3. 旧版 API：通过命令行参数传递事件类型和数据（向后兼容）
     """
     hook = ClaudeHook()
     
-    # 检查是否使用新版 API（通过环境变量）
-    hook_event = os.environ.get('CLAUDE_HOOK_EVENT', '')
-    
-    if hook_event:
-        # 新版 API：从 stdin 读取 JSON 数据
+    input_data = {}
+    hook_event = ''
+
+    # 新版 Claude Code CLI hook 通过 stdin 传入 JSON，hook_event_name 标识事件类型
+    # Claude Code 不会设置 CLAUDE_HOOK_EVENT 环境变量，因此 stdin 是主要事件来源
+    if not sys.stdin.isatty():
         try:
-            input_data = json.load(sys.stdin)
+            stdin_text = sys.stdin.read()
+            if stdin_text.strip():
+                input_data = json.loads(stdin_text)
+                hook_event = input_data.get('hook_event_name', '')
         except (json.JSONDecodeError, ValueError):
-            input_data = {}
-        
+            pass
+
+    # 向后兼容：旧版手动调用仍可通过环境变量指定事件
+    if not hook_event:
+        hook_event = os.environ.get('CLAUDE_HOOK_EVENT', '')
+
+    if hook_event:
         # 路由到对应的钩子处理器
         result = {"continue": True}
-        
+
         if hook_event == 'PreToolUse':
             result = hook.on_pre_tool_use(input_data)
         elif hook_event == 'PostToolUse':
@@ -369,26 +387,29 @@ def main():
             result = hook.on_notification(input_data)
         else:
             hook.logger.warning(f"未知的钩子事件: {hook_event}")
-        
-        # 输出 JSON 响应到 stdout
+
+        # 输出 JSON 响应到 stdout，确保 stdout 没有其他内容
+        sys.stdout.flush()
+        sys.stderr.flush()
         print(json.dumps(result))
-        
+        sys.stdout.flush()
+
     else:
         # 旧版 API：通过命令行参数（向后兼容）
         if len(sys.argv) < 2:
-            print("Usage: claude_hook.py <hook_type> [context_json]")
-            print("Or set CLAUDE_HOOK_EVENT environment variable for new API")
+            print("Usage: claude_hook.py <hook_type> [context_json]", file=sys.stderr)
+            print("Or set CLAUDE_HOOK_EVENT environment variable for new API", file=sys.stderr)
             sys.exit(1)
-            
+
         hook_type = sys.argv[1]
         context = {}
-        
+
         if len(sys.argv) > 2:
             try:
                 context = json.loads(sys.argv[2])
             except (json.JSONDecodeError, ValueError):
                 context = {'data': sys.argv[2]}
-        
+
         # 路由到对应的钩子处理器
         if hook_type == 'session_start':
             hook.on_session_start(context)
@@ -403,7 +424,7 @@ def main():
         elif hook_type == 'check_idle':
             hook.check_idle_notification()
         else:
-            print(f"Unknown hook type: {hook_type}")
+            print(f"Unknown hook type: {hook_type}", file=sys.stderr)
             sys.exit(1)
 
 
