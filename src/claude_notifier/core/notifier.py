@@ -136,6 +136,7 @@ class Notifier:
             template_data = {
                 'title': title,
                 'content': message,
+                'project': self._get_current_project(),
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
                 **kwargs
             }
